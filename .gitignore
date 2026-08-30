@@ -1,0 +1,32 @@
+# Dependencies
+node_modules/
+client/node_modules/
+server/node_modules/
+
+# Environment Variables
+.env
+.env.local
+.env.*
+
+# Build Outputs
+client/dist/
+build/
+*.log
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# IDEs and Editors
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Server Media Cache
+server/public/thumbnails/
