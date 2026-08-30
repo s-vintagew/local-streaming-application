@@ -1,0 +1,20 @@
+services:
+  vintagestream:
+    build: .
+    container_name: vintagestream
+    restart: unless-stopped
+    ports:
+      # Maps host port 6000 to container port 6000
+      - "5173:6000"
+    environment:
+      # Replace this with your actual TMDB API key if not using a .env file alongside docker-compose
+      - TMDB_API_KEY=${TMDB_API_KEY:-your_tmdb_api_key_here}
+      - PORT=6000
+      - MEDIA_PATH=/media
+    volumes:
+      # Map your host media directory to the container's /media directory
+      # We use :ro for Read-Only so the container can never accidentally delete your files
+      - /home/vintage/File_server:/media:ro
+      
+      # Persist generated thumbnails on the host so they aren't lost when updating the container
+      - /tmp/vintage-thumb:/app/server/public/thumbnails

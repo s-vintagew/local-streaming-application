@@ -77,6 +77,8 @@ router.get('/', (req, res) => {
 
   // Handle Transcoded Quality (via FFmpeg)
   const startTime = time ? parseInt(time) : 0;
+  console.log(`Streaming requested: resolution=${resolution}, time=${time}, startTime=${startTime}`);
+
   
   res.writeHead(200, {
     'Content-Type': 'video/mp4',
@@ -88,15 +90,24 @@ router.get('/', (req, res) => {
     .seekInput(startTime)
     .format('mp4')
     .outputOptions([
-      '-movflags frag_keyframe+empty_moov+faststart',
-      '-preset ultrafast',
-      '-g 30',
+      '-movflags frag_keyframe+empty_moov+default_base_moof+omit_tfhd_offset',
+      '-avoid_negative_ts make_zero'
     ]);
 
-  const resValue = parseInt(resolution);
-  command.videoFilter(`scale=-2:${resValue}`)
-         .videoCodec('libx264')
-         .audioCodec('aac');
+  if (resolution === 'transmux') {
+    // Zero-CPU video copy, only re-encode audio to AAC for browser compatibility
+    command.videoCodec('copy').audioCodec('aac').audioChannels(2).audioFrequency(44100).audioBitrate('128k');
+  } else {
+    // Full transcode with scaling
+    const resValue = parseInt(resolution);
+    command.outputOptions(['-preset ultrafast', '-g 30', '-pix_fmt yuv420p'])
+           .videoFilter(`scale=-2:${resValue}`)
+           .videoCodec('libx264')
+           .audioCodec('aac')
+           .audioChannels(2)
+           .audioFrequency(44100)
+           .audioBitrate('128k');
+  }
 
   command.on('error', (err) => {
     if (err.message !== 'Output stream closed' && err.message !== 'ffmpeg was killed with signal SIGKILL') {

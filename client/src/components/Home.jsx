@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import axios from 'axios';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Play, Info, Search, Tv, Film } from 'lucide-react';
+import { Info, Search, Tv, Film } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 
 const API_BASE = import.meta.env.VITE_API_BASE || '/api';
@@ -68,6 +68,7 @@ export default function Home() {
   const [library, setLibrary] = useState({ movies: [], shows: [] });
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState(sessionStorage.getItem('ag_activeTab') || 'movies');
+  const [searchQuery, setSearchQuery] = useState('');
 
   useEffect(() => {
     sessionStorage.setItem('ag_activeTab', activeTab);
@@ -103,7 +104,14 @@ export default function Home() {
     );
   }
 
-  const activeMedia = activeTab === 'movies' ? library.movies : library.shows;
+  const activeMedia = (activeTab === 'movies' ? library.movies : library.shows).filter(media => {
+    if (!searchQuery) return true;
+    const query = searchQuery.toLowerCase();
+    return (
+      (media.title && media.title.toLowerCase().includes(query)) ||
+      (media.originalTitle && media.originalTitle.toLowerCase().includes(query))
+    );
+  });
 
   return (
     <div className="min-h-screen bg-brand-dark text-white pb-24 font-sans">
@@ -126,6 +134,16 @@ export default function Home() {
           </nav>
         </div>
         <div className="flex items-center space-x-6">
+          <div className="relative flex items-center">
+            <Search size={20} className="absolute left-3 text-gray-400 pointer-events-none" />
+            <input
+              type="text"
+              placeholder="Search titles..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className="bg-gray-800/80 text-white rounded-full pl-10 pr-4 py-2 focus:outline-none focus:ring-2 focus:ring-brand-red w-36 sm:w-64 transition-all duration-300 placeholder-gray-500"
+            />
+          </div>
           <a 
             href="https://www.themoviedb.org/" 
             target="_blank" 
@@ -135,7 +153,6 @@ export default function Home() {
             <span>Powered by</span>
             <span className="font-bold text-transparent bg-clip-text bg-gradient-to-r from-[#90cea1] to-[#01b4e4] text-xs">TMDB</span>
           </a>
-          <Search size={24} className="cursor-pointer hover:text-gray-300 transition" />
         </div>
       </header>
 
