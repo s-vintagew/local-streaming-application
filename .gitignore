@@ -30,3 +30,10 @@ Thumbs.db
 
 # Server Media Cache
 server/public/thumbnails/
+
+# Media Files
+*.mp4
+*.mkv
+*.avi
+*.webm
+*.mov

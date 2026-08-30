@@ -27,23 +27,26 @@ app.use('/stream', streamRouter);
 app.use(express.static(path.join(__dirname, 'public')));
 
 app.get('*', (req, res) => {
-  res.sendFile(path.join(__dirname, 'public', 'index.html'));
+  const indexPath = path.join(__dirname, 'public', 'index.html');
+  if (fs.existsSync(indexPath)) {
+    res.sendFile(indexPath);
+  } else {
+    res.status(404).send('Frontend not built yet. Use Vite dev server on port 3200.');
+  }
 });
 
-// Initial scan
-scanMedia().then(() => {
-  app.listen(PORT, () => {
-    console.log(`Server running on port ${PORT}`);
-  });
+// Start server immediately
+app.listen(PORT, () => {
+  console.log(`Server running on port ${PORT}`);
   
-  // Auto-scan every 60 seconds
-  setInterval(() => {
-    console.log('Running background auto-scan...');
-    scanMedia();
-  }, 60 * 1000);
-}).catch(err => {
-  console.error("Failed to scan media on startup:", err);
-  app.listen(PORT, () => {
-    console.log(`Server running on port ${PORT} (media scan failed)`);
+  // Run initial scan in the background
+  scanMedia().then(() => {
+    // Auto-scan every 60 seconds
+    setInterval(() => {
+      console.log('Running background auto-scan...');
+      scanMedia();
+    }, 5 * 60 * 1000);
+  }).catch(err => {
+    console.error("Failed to scan media on startup:", err);
   });
 });
