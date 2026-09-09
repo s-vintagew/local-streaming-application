@@ -5,7 +5,7 @@ const TMDB_URL = 'https://api.themoviedb.org/3';
 // Simple in-memory cache
 const cache = new Map();
 
-export const fetchMetadata = async (query, type = 'movie', tmdbId = null) => {
+export const fetchMetadata = async (query, type = 'movie', tmdbId = null, year = null) => {
   const apiKey = process.env.TMDB_API_KEY;
   if (!apiKey || apiKey === 'your_tmdb_api_key_here') {
     console.warn('TMDB_API_KEY not set or invalid, skipping metadata fetch.');
@@ -30,9 +30,12 @@ export const fetchMetadata = async (query, type = 'movie', tmdbId = null) => {
       });
       result = response.data;
     } else {
-      const response = await axios.get(`${TMDB_URL}/search/${searchType}`, {
-        params: { api_key: apiKey, query: query }
-      });
+      const params = { api_key: apiKey, query: query };
+      if (year) {
+        if (searchType === 'movie') params.primary_release_year = year;
+        else params.first_air_date_year = year;
+      }
+      const response = await axios.get(`${TMDB_URL}/search/${searchType}`, { params });
       if (response.data.results && response.data.results.length > 0) {
         result = response.data.results[0];
       }
