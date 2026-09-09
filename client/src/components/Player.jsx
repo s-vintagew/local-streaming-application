@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { Play, Pause, SkipBack, SkipForward, ArrowLeft, Settings, Volume2, VolumeX, Maximize, Minimize } from 'lucide-react';
+import { Play, Pause, SkipBack, SkipForward, ArrowLeft, Settings, Volume2, VolumeX, Maximize, Minimize, MessageSquare } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 
 const STREAM_BASE = import.meta.env.VITE_STREAM_BASE || '/stream';
@@ -23,6 +23,16 @@ export default function Player() {
   const containerRef = useRef(null);
   const lastTapRef = useRef({ time: 0, zone: '' });
   const [isFullscreen, setIsFullscreen] = useState(false);
+
+  // Force kill the video stream connection when navigating away to prevent HTTP socket exhaustion
+  useEffect(() => {
+    return () => {
+      if (videoRef.current) {
+        videoRef.current.removeAttribute('src');
+        videoRef.current.load();
+      }
+    };
+  }, []);
   
   const [isPlaying, setIsPlaying] = useState(false);
   const [showControls, setShowControls] = useState(true);
@@ -40,6 +50,9 @@ export default function Player() {
   const [volume, setVolume] = useState(1);
   const [isMuted, setIsMuted] = useState(false);
   const [videoUrl, setVideoUrl] = useState('');
+  const [subtitles, setSubtitles] = useState([]);
+  const [activeSubtitle, setActiveSubtitle] = useState(null);
+  const [showSubtitleMenu, setShowSubtitleMenu] = useState(false);
 
   const controlsTimeout = useRef(null);
 
@@ -55,6 +68,9 @@ export default function Player() {
         const data = await res.json();
         if (data.duration) {
           setDuration(data.duration);
+        }
+        if (data.subtitles) {
+          setSubtitles(data.subtitles);
         }
         // If not natively streamable (e.g., mkv, avi), force transcode mode
         const isNative = data.extension === '.mp4' || data.extension === '.webm';
@@ -166,6 +182,22 @@ export default function Player() {
     }
   };
 
+
+  useEffect(() => {
+    if (videoRef.current) {
+      const tracks = videoRef.current.textTracks;
+      for (let i = 0; i < tracks.length; i++) {
+        // We match by checking if this track corresponds to the activeSubtitle
+        // React renders tracks in order of subtitles array
+        if (activeSubtitle !== null && i === subtitles.findIndex(s => s.index === activeSubtitle)) {
+          tracks[i].mode = 'showing';
+        } else {
+          tracks[i].mode = 'hidden';
+        }
+      }
+    }
+  }, [activeSubtitle, subtitles, videoUrl]);
+
   const togglePlay = () => {
     if (videoRef.current.paused) {
       videoRef.current.play();
@@ -275,9 +307,33 @@ export default function Player() {
         onLoadedMetadata={handleLoadedMetadata}
         onWaiting={() => setIsBuffering(true)}
         onPlaying={() => setIsBuffering(false)}
-        onCanPlay={() => setIsBuffering(false)}
+        onCanPlay={() => {
+          setIsBuffering(false);
+          // Force tracks update when video can play
+          if (videoRef.current) {
+            const tracks = videoRef.current.textTracks;
+            for (let i = 0; i < tracks.length; i++) {
+              if (activeSubtitle !== null && i === subtitles.findIndex(s => s.index === activeSubtitle)) {
+                tracks[i].mode = 'showing';
+              } else {
+                tracks[i].mode = 'hidden';
+              }
+            }
+          }
+        }}
         autoPlay
-      />
+      >
+        {subtitles.map(sub => (
+          <track
+            key={sub.index}
+            kind="subtitles"
+            src={`/api/subtitle?id=${id}&index=${sub.index}`}
+            srcLang={sub.language}
+            label={sub.title || sub.language}
+            default={activeSubtitle === sub.index}
+          />
+        ))}
+      </video>
 
       {/* Touch / Click Zones */}
       <div 
@@ -313,6 +369,39 @@ export default function Player() {
               </button>
               
               <div className="flex items-center space-x-6">
+                
+                {/* Subtitles Menu */}
+                {subtitles.length > 0 && (
+                  <div className="relative">
+                    <button 
+                      onClick={() => setShowSubtitleMenu(!showSubtitleMenu)}
+                      className={`text-white hover:text-brand-red flex items-center space-x-2 transition ${activeSubtitle !== null ? 'text-brand-red' : ''}`}
+                    >
+                      <MessageSquare size={24} />
+                    </button>
+                    
+                    {showSubtitleMenu && (
+                      <div className="absolute top-full right-0 mt-4 bg-gray-900 rounded-lg py-2 min-w-[150px] shadow-2xl border border-gray-800">
+                        <button
+                          onClick={() => { setActiveSubtitle(null); setShowSubtitleMenu(false); }}
+                          className={`block w-full text-left px-4 py-2 hover:bg-gray-800 transition ${activeSubtitle === null ? 'text-brand-red font-bold' : 'text-gray-200'}`}
+                        >
+                          Off
+                        </button>
+                        {subtitles.map(sub => (
+                          <button
+                            key={sub.index}
+                            onClick={() => { setActiveSubtitle(sub.index); setShowSubtitleMenu(false); }}
+                            className={`block w-full text-left px-4 py-2 hover:bg-gray-800 transition ${activeSubtitle === sub.index ? 'text-brand-red font-bold' : 'text-gray-200'}`}
+                          >
+                            {sub.title || sub.language || `Track ${sub.index}`}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
+
                 <div className="relative">
                   <button 
                     onClick={() => setShowQualityMenu(!showQualityMenu)}
