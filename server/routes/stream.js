@@ -100,7 +100,15 @@ router.get('/', (req, res) => {
   } else {
     // Full transcode with scaling
     const resValue = parseInt(resolution);
-    command.outputOptions(['-preset ultrafast', '-g 30', '-pix_fmt yuv420p'])
+    command.outputOptions([
+             '-preset veryfast', 
+             '-crf 23', 
+             '-maxrate 5M', 
+             '-bufsize 10M', 
+             '-g 48', 
+             '-pix_fmt yuv420p',
+             '-threads 0'
+           ])
            .videoFilter(`scale=-2:${resValue}`)
            .videoCodec('libx264')
            .audioCodec('aac')

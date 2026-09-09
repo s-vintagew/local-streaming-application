@@ -75,21 +75,24 @@ export default function Home() {
   }, [activeTab]);
   const navigate = useNavigate();
 
-  useEffect(() => {
-    const fetchLibrary = async () => {
-      try {
-        const res = await axios.get(`${API_BASE}/library`);
-        setLibrary(res.data);
-        if (res.data.movies.length === 0 && res.data.shows.length > 0) {
-          setActiveTab('shows');
-        }
-      } catch (err) {
-        console.error("Failed to fetch library", err);
-      } finally {
-        setLoading(false);
+  const fetchLibrary = async (isInitial = false) => {
+    try {
+      const res = await axios.get(`${API_BASE}/library`);
+      setLibrary(res.data);
+      if (isInitial && res.data.movies.length === 0 && res.data.shows.length > 0) {
+        setActiveTab('shows');
       }
-    };
-    fetchLibrary();
+    } catch (err) {
+      console.error("Failed to fetch library", err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchLibrary(true);
+    const interval = setInterval(() => fetchLibrary(false), 60000); // Refresh every minute
+    return () => clearInterval(interval);
   }, []);
 
   const handleCardClick = (id, type) => {
