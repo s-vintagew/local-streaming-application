@@ -17,9 +17,8 @@ export default function ShowDetails() {
     const fetchMedia = async () => {
       try {
         const res = await axios.get(`${API_BASE}/library`);
-        const foundShow = res.data.shows.find(s => s.id === id);
-        const foundMovie = res.data.movies.find(m => m.id === id);
-        setMedia(foundShow || foundMovie);
+        const lists = [res.data.movies, res.data.shows, res.data.marvel].filter(Array.isArray);
+        setMedia(lists.flat().find(item => item.id === id) || null);
       } catch (err) {
         console.error("Failed to fetch library", err);
       } finally {
