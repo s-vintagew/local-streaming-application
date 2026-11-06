@@ -1,6 +1,6 @@
 services:
   vintagestream:
-    image: ghcr.io/s-vintagew/local-streaming-application:v3
+    image: ghcr.io/s-vintagew/local-streaming-application:latest
     container_name: vintagestream
     restart: unless-stopped
     ports:
