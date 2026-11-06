@@ -2,6 +2,7 @@ import crypto from 'crypto';
 import fs from 'fs';
 import path from 'path';
 import { fetchMetadata } from './metadata.js';
+import { classifyMarvel } from './marvel.js';
 
 const stableId = (value) => crypto.createHash('sha1').update(String(value)).digest('hex').slice(0, 12);
 
@@ -11,7 +12,8 @@ export const mediaIdForShow = (title) => stableId(`show:${title}`);
 
 let mediaLibrary = {
   movies: [],
-  shows: []
+  shows: [],
+  marvel: []
 };
 
 const SUPPORTED_EXT = ['.mp4', '.mkv', '.avi', '.webm'];
@@ -27,16 +29,20 @@ export const scanMedia = async () => {
     }
 
     const allFiles = await scanDirectory(mediaPath);
-    const newLibrary = { movies: [], shows: [] };
+    const newLibrary = { movies: [], shows: [], marvel: [] };
     
-    // Group TV shows by title
+    // Group TV shows by title. Marvel releases are shelved separately.
     const showsMap = {};
     const moviesMap = {};
+    const marvelShowsMap = {};
+    const marvelMoviesMap = {};
 
     for (const file of allFiles) {
+      const showBucket = file.marvel ? marvelShowsMap : showsMap;
+      const movieBucket = file.marvel ? marvelMoviesMap : moviesMap;
       if (file.type === 'tv') {
-        if (!showsMap[file.title]) {
-          showsMap[file.title] = {
+        if (!showBucket[file.title]) {
+          showBucket[file.title] = {
             id: mediaIdForShow(file.title),
             title: file.title,
             type: 'tv',
@@ -44,8 +50,13 @@ export const scanMedia = async () => {
             backdropPath: file.backdropPath,
             overview: file.overview,
             voteAverage: file.voteAverage,
+            marvelOrder: file.marvelOrder,
+            marvelPhase: file.marvelPhase,
             episodes: []
           };
+        } else if (file.marvel && file.marvelOrder < showBucket[file.title].marvelOrder) {
+          showBucket[file.title].marvelOrder = file.marvelOrder;
+          showBucket[file.title].marvelPhase = file.marvelPhase;
         }
         // Clean up episode titles for better display (remove [Subs], remove show title if present)
         let cleanEpTitle = file.originalTitle
@@ -60,7 +71,7 @@ export const scanMedia = async () => {
           cleanEpTitle = `Episode ${file.episode}`;
         }
 
-        showsMap[file.title].episodes.push({
+        showBucket[file.title].episodes.push({
           id: file.id,
           season: file.season,
           episode: file.episode,
@@ -70,31 +81,48 @@ export const scanMedia = async () => {
         });
       } else {
         const uniqueKey = file.tmdbId ? `tmdb-${file.tmdbId}` : file.title;
-        if (!moviesMap[uniqueKey]) {
-          moviesMap[uniqueKey] = file;
+        if (!movieBucket[uniqueKey]) {
+          movieBucket[uniqueKey] = file;
         } else {
           // If we already have a movie with this exact TMDB ID (or title), store the duplicate path as an alternate
-          if (!moviesMap[uniqueKey].alternatePaths) {
-            moviesMap[uniqueKey].alternatePaths = [];
+          if (!movieBucket[uniqueKey].alternatePaths) {
+            movieBucket[uniqueKey].alternatePaths = [];
           }
-          moviesMap[uniqueKey].alternatePaths.push(file.path);
+          movieBucket[uniqueKey].alternatePaths.push(file.path);
         }
       }
     }
 
-    // Sort episodes within shows
-    newLibrary.shows = Object.values(showsMap).map(show => {
+    // Same title recognized once as Marvel and once as a normal title: keep the Marvel shelf.
+    for (const title of Object.keys(showsMap)) {
+      if (!marvelShowsMap[title]) continue;
+      marvelShowsMap[title].episodes.push(...showsMap[title].episodes);
+      delete showsMap[title];
+    }
+    for (const key of Object.keys(moviesMap)) {
+      if (!marvelMoviesMap[key]) continue;
+      const extra = moviesMap[key];
+      const dest = marvelMoviesMap[key];
+      if (!dest.alternatePaths) dest.alternatePaths = [];
+      dest.alternatePaths.push(extra.path, ...(extra.alternatePaths || []));
+      delete moviesMap[key];
+    }
+
+    const sortShows = (map) => Object.values(map).map(show => {
       show.episodes.sort((a, b) => {
         if (a.season === b.season) return a.episode - b.episode;
         return a.season - b.season;
       });
       return show;
     });
-    
+
+    newLibrary.shows = sortShows(showsMap);
     newLibrary.movies = Object.values(moviesMap);
+    newLibrary.marvel = [...Object.values(marvelMoviesMap), ...sortShows(marvelShowsMap)]
+      .sort((a, b) => (a.marvelOrder - b.marvelOrder) || a.title.localeCompare(b.title));
 
     mediaLibrary = newLibrary;
-    console.log(`Scan complete. Found ${mediaLibrary.movies.length} movies and ${mediaLibrary.shows.length} shows.`);
+    console.log(`Scan complete. Found ${mediaLibrary.movies.length} movies, ${mediaLibrary.shows.length} shows, and ${mediaLibrary.marvel.length} Marvel titles.`);
   } catch (err) {
     console.error('Error scanning media:', err);
   }
@@ -237,10 +265,12 @@ const scanDirectory = async (dir) => {
         }
         
         const id = mediaIdForPath(fullPath);
+        const displayTitle = metadata.title || searchTitle || title;
+        const marvel = classifyMarvel(fullPath, displayTitle, searchTitle, titleRaw, path.basename(dir));
         items.push({
           id,
           tmdbId: metadata.tmdb_id,
-          title: metadata.title || searchTitle || title,
+          title: displayTitle,
           originalTitle: titleRaw,
           path: fullPath,
           type,
@@ -249,7 +279,10 @@ const scanDirectory = async (dir) => {
           posterPath: metadata.poster_path || `/api/thumbnail?id=${id}`,
           backdropPath: metadata.backdrop_path,
           overview: metadata.overview,
-          voteAverage: metadata.vote_average
+          voteAverage: metadata.vote_average,
+          marvel: marvel.marvel,
+          marvelOrder: marvel.order,
+          marvelPhase: marvel.phase
         });
       }
     }
@@ -259,11 +292,21 @@ const scanDirectory = async (dir) => {
 
 export const getLibrary = () => mediaLibrary;
 
+const movieEntries = () => [
+  ...(mediaLibrary.movies || []),
+  ...(mediaLibrary.marvel || []).filter(item => item.type !== 'tv' && item.path)
+];
+
+const showEntries = () => [
+  ...(mediaLibrary.shows || []),
+  ...(mediaLibrary.marvel || []).filter(item => Array.isArray(item.episodes))
+];
+
 export const findMediaById = (id) => {
   if (!id) return null;
-  const movie = mediaLibrary.movies.find(m => m.id === id);
+  const movie = movieEntries().find(m => m.id === id);
   if (movie) return movie;
-  for (const show of mediaLibrary.shows) {
+  for (const show of showEntries()) {
     const ep = show.episodes.find(e => e.id === id);
     if (ep) return ep;
   }

@@ -1,12 +1,24 @@
 import { useEffect, useState } from 'react';
 import axios from 'axios';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Info, Search, Tv, Film } from 'lucide-react';
+import { Info, Search, Tv, Film, Shield } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 
 const API_BASE = import.meta.env.VITE_API_BASE || '/api';
 
-const MediaCard = ({ media, onClick }) => {
+const MARVEL_PHASES = [
+  { id: 'phase-1', label: 'Phase 1' },
+  { id: 'phase-2', label: 'Phase 2' },
+  { id: 'phase-3', label: 'Phase 3' },
+  { id: 'phase-4', label: 'Phase 4' },
+  { id: 'phase-5', label: 'Phase 5' },
+  { id: 'phase-6', label: 'Phase 6 · Doomsday' },
+  { id: 'series', label: 'Series' },
+  { id: 'other', label: 'More Marvel' },
+  { id: 'folder', label: 'From the Marvel folder' }
+];
+
+const MediaCard = ({ media, onClick, showKind = false }) => {
   const [isHovered, setIsHovered] = useState(false);
 
   return (
@@ -23,6 +35,12 @@ const MediaCard = ({ media, onClick }) => {
         alt={media.title}
         className="w-full h-full object-cover transition-transform duration-500"
       />
+
+      {showKind && (
+        <span className="absolute top-3 left-3 z-10 text-[10px] font-bold uppercase tracking-wide bg-black/75 text-amber-200 px-2 py-1 rounded">
+          {media.type === 'tv' ? 'Series' : 'Movie'}
+        </span>
+      )}
       
       <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-black/20 to-transparent" />
 
@@ -65,7 +83,7 @@ const MediaCard = ({ media, onClick }) => {
 };
 
 export default function Home() {
-  const [library, setLibrary] = useState({ movies: [], shows: [] });
+  const [library, setLibrary] = useState({ movies: [], shows: [], marvel: [] });
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState(sessionStorage.getItem('ag_activeTab') || 'movies');
   const [searchQuery, setSearchQuery] = useState('');
@@ -107,7 +125,13 @@ export default function Home() {
     );
   }
 
-  const activeMedia = (activeTab === 'movies' ? library.movies : library.shows).filter(media => {
+  const tabLabel = activeTab === 'movies' ? 'Movies' : activeTab === 'shows' ? 'TV Shows' : 'Marvel';
+  const source = activeTab === 'movies'
+    ? library.movies
+    : activeTab === 'shows'
+      ? library.shows
+      : (library.marvel || []);
+  const activeMedia = source.filter(media => {
     if (!searchQuery) return true;
     const query = searchQuery.toLowerCase();
     return (
@@ -115,6 +139,12 @@ export default function Home() {
       (media.originalTitle && media.originalTitle.toLowerCase().includes(query))
     );
   });
+  const marvelGroups = MARVEL_PHASES
+    .map(phase => ({
+      ...phase,
+      items: activeMedia.filter(media => (media.marvelPhase || 'folder') === phase.id)
+    }))
+    .filter(phase => phase.items.length > 0);
 
   return (
     <div className="min-h-screen bg-brand-dark text-white pb-24 font-sans">
@@ -133,6 +163,12 @@ export default function Home() {
               className={`flex items-center space-x-2 font-semibold transition-colors ${activeTab === 'shows' ? 'text-white' : 'text-gray-400 hover:text-gray-200'}`}
             >
               <Tv size={20} /> <span>TV Shows</span>
+            </button>
+            <button 
+              onClick={() => setActiveTab('marvel')}
+              className={`flex items-center space-x-2 font-semibold transition-colors ${activeTab === 'marvel' ? 'text-amber-300' : 'text-gray-400 hover:text-gray-200'}`}
+            >
+              <Shield size={20} /> <span>Marvel</span>
             </button>
           </nav>
         </div>
@@ -175,21 +211,51 @@ export default function Home() {
           <Tv size={24} />
           <span className="text-xs font-semibold">Shows</span>
         </button>
+        <button 
+          onClick={() => setActiveTab('marvel')}
+          className={`flex flex-col items-center space-y-1 ${activeTab === 'marvel' ? 'text-amber-300' : 'text-gray-500'}`}
+        >
+          <Shield size={24} />
+          <span className="text-xs font-semibold">Marvel</span>
+        </button>
       </div>
 
       <main className="pt-32 px-8 md:px-12 max-w-[2000px] mx-auto">
         {activeMedia.length > 0 ? (
-          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-6 md:gap-8">
-            {activeMedia.map(media => (
-              <MediaCard key={media.id} media={media} onClick={handleCardClick} />
-            ))}
-          </div>
+          activeTab === 'marvel' ? (
+            <div>
+              <p className="text-gray-400 mb-10 max-w-3xl">
+                MCU and other Marvel releases stay on this shelf, in timeline order, instead of Movies and TV Shows. A file inside a folder named Marvel or MCU is included even when the title is not recognized.
+              </p>
+              {marvelGroups.map(phase => (
+                <section key={phase.id} className="mb-14">
+                  <h2 className="text-xl font-bold mb-6 text-gray-100 flex items-center">
+                    {phase.label}
+                    <span className="ml-4 flex-1 h-px bg-gradient-to-r from-amber-700/80 to-transparent"></span>
+                  </h2>
+                  <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-6 md:gap-8">
+                    {phase.items.map(media => (
+                      <MediaCard key={media.id} media={media} onClick={handleCardClick} showKind />
+                    ))}
+                  </div>
+                </section>
+              ))}
+            </div>
+          ) : (
+            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-6 md:gap-8">
+              {activeMedia.map(media => (
+                <MediaCard key={media.id} media={media} onClick={handleCardClick} />
+              ))}
+            </div>
+          )
         ) : (
           <div className="mt-32 text-center max-w-lg mx-auto bg-gray-900/50 p-12 rounded-2xl border border-gray-800">
             <Search size={48} className="mx-auto text-gray-500 mb-6" />
-            <h2 className="text-2xl font-bold text-white mb-2">No {activeTab === 'movies' ? 'Movies' : 'TV Shows'} Found</h2>
+            <h2 className="text-2xl font-bold text-white mb-2">No {tabLabel} Found</h2>
             <p className="text-gray-400">
-              We couldn't find any {activeTab === 'movies' ? 'movies' : 'TV shows'} in your library.
+              {activeTab === 'marvel'
+                ? 'Name the file after the film or series, or drop it in a Marvel folder. It will show up here instead of Movies and TV Shows.'
+                : `We couldn't find any ${tabLabel.toLowerCase()} in your library.`}
             </p>
           </div>
         )}
