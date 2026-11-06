@@ -22,7 +22,8 @@ const LANG_NAMES = {
   eng: 'English', en: 'English', hin: 'Hindi', spa: 'Spanish', fre: 'French', fra: 'French',
   ger: 'German', deu: 'German', ita: 'Italian', jpn: 'Japanese', kor: 'Korean',
   chi: 'Chinese', zho: 'Chinese', rus: 'Russian', por: 'Portuguese', pol: 'Polish',
-  ara: 'Arabic', und: 'Unknown'
+  ara: 'Arabic', dut: 'Dutch', nld: 'Dutch', swe: 'Swedish', tur: 'Turkish',
+  tha: 'Thai', vie: 'Vietnamese', und: 'Unknown'
 };
 
 const parseVttTime = (value) => {
@@ -50,7 +51,12 @@ const parseVtt = (raw) => {
 };
 
 const subtitleLabel = (sub) => {
-  const lang = LANG_NAMES[sub.language] || sub.language || 'Unknown';
+  const known = sub.language && sub.language !== 'und' ? LANG_NAMES[sub.language] : '';
+  if (sub.source === 'file' && !known) {
+    if (!sub.title || sub.title === 'External') return 'Subtitles';
+    return sub.title;
+  }
+  const lang = known || sub.language || 'Unknown';
   let extra = sub.title || '';
   if (extra.length > 36 || /1080p|WEBRip|GalaxyRG|x264|x265/i.test(extra)) extra = '';
   if (/^sdh$/i.test(sub.title || '')) extra = 'SDH';
@@ -398,7 +404,7 @@ export default function Player() {
       return undefined;
     }
     let cancelled = false;
-    fetch(`/api/subtitle?id=${encodeURIComponent(id)}&index=${activeSubtitle}`)
+    fetch(`/api/subtitle?id=${encodeURIComponent(id)}&index=${encodeURIComponent(activeSubtitle)}`)
       .then((res) => {
         if (!res.ok) throw new Error('subtitle fetch failed');
         return res.text();
@@ -547,44 +553,45 @@ export default function Player() {
               <div className="flex items-center space-x-6">
                 
                 {/* Subtitles Menu */}
-                {subtitles.length > 0 && (
-                  <div className="relative">
-                    <button 
-                      onClick={() => {
-                        setShowSubtitleMenu(!showSubtitleMenu);
-                        setShowQualityMenu(false);
-                      }}
-                      className={`text-white hover:text-brand-red flex items-center space-x-2 transition ${activeSubtitle !== null ? 'text-brand-red' : ''}`}
-                    >
-                      <MessageSquare size={24} />
-                    </button>
-                    
-                    {showSubtitleMenu && (
-                      <div className="absolute top-full right-0 mt-4 bg-gray-900 rounded-lg py-2 min-w-[220px] max-h-[60vh] overflow-y-auto shadow-2xl border border-gray-800">
+                <div className="relative">
+                  <button 
+                    onClick={() => {
+                      setShowSubtitleMenu(!showSubtitleMenu);
+                      setShowQualityMenu(false);
+                    }}
+                    className={`text-white hover:text-brand-red flex items-center space-x-2 transition ${activeSubtitle !== null ? 'text-brand-red' : ''}`}
+                  >
+                    <MessageSquare size={24} />
+                  </button>
+                  
+                  {showSubtitleMenu && (
+                    <div className="absolute top-full right-0 mt-4 bg-gray-900 rounded-lg py-2 min-w-[220px] max-h-[60vh] overflow-y-auto shadow-2xl border border-gray-800">
+                      <button
+                        onClick={() => { setActiveSubtitle(null); setShowSubtitleMenu(false); }}
+                        className={`block w-full text-left px-4 py-2 hover:bg-gray-800 transition ${activeSubtitle === null ? 'text-brand-red font-bold' : 'text-gray-200'}`}
+                      >
+                        Off
+                      </button>
+                      {subtitles.length === 0 && (
+                        <p className="px-4 py-2 text-sm text-gray-500">No subtitle files</p>
+                      )}
+                      {subtitles.map(sub => (
                         <button
-                          onClick={() => { setActiveSubtitle(null); setShowSubtitleMenu(false); }}
-                          className={`block w-full text-left px-4 py-2 hover:bg-gray-800 transition ${activeSubtitle === null ? 'text-brand-red font-bold' : 'text-gray-200'}`}
+                          key={sub.index}
+                          disabled={!sub.supported}
+                          onClick={() => {
+                            if (!sub.supported) return;
+                            setActiveSubtitle(sub.index);
+                            setShowSubtitleMenu(false);
+                          }}
+                          className={`block w-full text-left px-4 py-2 transition ${!sub.supported ? 'text-gray-500 cursor-not-allowed' : 'hover:bg-gray-800'} ${activeSubtitle === sub.index ? 'text-brand-red font-bold' : 'text-gray-200'}`}
                         >
-                          Off
+                          {subtitleLabel(sub)}
                         </button>
-                        {subtitles.map(sub => (
-                          <button
-                            key={sub.index}
-                            disabled={!sub.supported}
-                            onClick={() => {
-                              if (!sub.supported) return;
-                              setActiveSubtitle(sub.index);
-                              setShowSubtitleMenu(false);
-                            }}
-                            className={`block w-full text-left px-4 py-2 transition ${!sub.supported ? 'text-gray-500 cursor-not-allowed' : 'hover:bg-gray-800'} ${activeSubtitle === sub.index ? 'text-brand-red font-bold' : 'text-gray-200'}`}
-                          >
-                            {subtitleLabel(sub)}
-                          </button>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                )}
+                      ))}
+                    </div>
+                  )}
+                </div>
 
                 <div className="relative">
                   <button 

@@ -1,7 +1,7 @@
 services:
   vintagestream:
     build: .
-    image: vintagestream:v_4
+    image: vintagestream:v_5
     container_name: vintagestream
     restart: unless-stopped
     ports:
@@ -12,6 +12,7 @@ services:
       - TMDB_API_KEY=${TMDB_API_KEY:-your_tmdb_api_key_here}
       - PORT=6000
       - MEDIA_PATH=/media
+      - SUB_CACHE_DIR=/tmp/vintagestream-subs
     volumes:
       # Map your host media directory to the container's /media directory
       # We use :ro for Read-Only so the container can never accidentally delete your files
@@ -19,3 +20,6 @@ services:
       
       # Persist generated thumbnails on the host so they aren't lost when updating the container
       - /tmp/vintage-thumb:/app/server/public/thumbnails
+
+      # Converted subtitle files. The media volume is read-only, so this cache has to be writable.
+      - /tmp/vintage-subs:/tmp/vintagestream-subs
