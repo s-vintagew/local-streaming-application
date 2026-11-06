@@ -2,6 +2,7 @@ import { useState, useRef, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import Hls from 'hls.js';
 import { Play, Pause, SkipBack, SkipForward, ArrowLeft, Settings, Volume2, VolumeX, Maximize, Minimize, MessageSquare } from 'lucide-react';
+import ExternalPlayerButton from './ExternalPlayerButton';
 import { motion, AnimatePresence } from 'framer-motion';
 
 const STREAM_BASE = import.meta.env.VITE_STREAM_BASE || '/stream';
@@ -551,7 +552,8 @@ export default function Player() {
               </button>
               
               <div className="flex items-center space-x-6">
-                
+                <ExternalPlayerButton mediaId={id} variant="plain" />
+
                 {/* Subtitles Menu */}
                 <div className="relative">
                   <button 
