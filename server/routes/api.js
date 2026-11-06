@@ -5,7 +5,7 @@ import ffmpeg from 'fluent-ffmpeg';
 import { fileURLToPath } from 'url';
 import { getLibrary, scanMedia, findMediaById } from '../utils/scanner.js';
 import { analyzeProbe } from '../utils/playability.js';
-import { describeSubtitle, getSubtitleVtt } from '../utils/subtitles.js';
+import { describeSubtitle, getExternalSubtitleVtt, getSubtitleVtt, listExternalSubtitles, toPublicSubtitle } from '../utils/subtitles.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -87,11 +87,13 @@ router.get('/metadata', (req, res) => {
       return res.status(500).json({ error: 'Failed to probe media' });
     }
     const play = analyzeProbe(metadata, path.extname(media.path).toLowerCase());
+    const embedded = metadata.streams
+      .filter(s => s.codec_type === 'subtitle')
+      .map(describeSubtitle);
+    const external = listExternalSubtitles(media.path).map(toPublicSubtitle);
     res.json({
       ...play,
-      subtitles: metadata.streams
-        .filter(s => s.codec_type === 'subtitle')
-        .map(describeSubtitle)
+      subtitles: [...external, ...embedded]
     });
   });
 });
@@ -106,12 +108,15 @@ router.get('/subtitle', async (req, res) => {
   if (!media) return res.status(404).send('Media not found');
 
   try {
-    const vttPath = await getSubtitleVtt(id, index, media.path);
+    const vttPath = String(index).startsWith('f')
+      ? await getExternalSubtitleVtt(id, index, media.path)
+      : await getSubtitleVtt(id, index, media.path);
     res.setHeader('Content-Type', 'text/vtt; charset=utf-8');
     res.setHeader('Cache-Control', 'public, max-age=86400');
     res.sendFile(path.resolve(vttPath));
   } catch (err) {
     console.error('Subtitle extract failed:', err.message);
+    if (err.status === 404) return res.status(404).send('Subtitle file not found');
     res.status(415).send('Subtitle track cannot be converted to text');
   }
 });
