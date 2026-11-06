@@ -32,9 +32,17 @@ router.get('/thumbnail', (req, res) => {
   if (!id) return res.status(400).send('Missing id');
 
   const library = getLibrary();
-  let media = library.movies.find(m => m.id === id);
+  const movies = [
+    ...(library.movies || []),
+    ...(library.marvel || []).filter(item => item.type !== 'tv')
+  ];
+  const shows = [
+    ...(library.shows || []),
+    ...(library.marvel || []).filter(item => item.type === 'tv')
+  ];
+  let media = movies.find(m => m.id === id);
   if (!media) {
-    for (const show of library.shows) {
+    for (const show of shows) {
       if (show.id === id) {
         // Use first episode of show for thumbnail
         media = show.episodes[0];

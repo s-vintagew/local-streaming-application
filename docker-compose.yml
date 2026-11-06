@@ -1,7 +1,8 @@
 services:
   vintagestream:
     build: .
-    image: vintagestream:v_4
+    # Temporary Marvel build. Revert the Marvel PR to restore vintagestream:v_4.
+    image: vintagestream:mcu
     container_name: vintagestream
     restart: unless-stopped
     ports:

@@ -84,6 +84,12 @@ To get the best matches from TMDB, standard naming conventions are recommended, 
 - **Movies:** \`Movie Title (Year).mkv\`
 - **TV Shows:** \`Show Title/Season 01/Show Title S01E01.mkv\`
 
+### Marvel shelf (temporary)
+
+This build adds a **Marvel** tab and publishes the Docker image as `vintagestream:mcu` (`LABEL version="mcu"`). Recognized MCU and Marvel releases are taken out of Movies and TV Shows and grouped in timeline order, through Avengers: Doomsday. Anything placed in a folder named `Marvel` or `MCU` is included as well.
+
+Revert the Marvel pull request to return the app and the image tag to `vintagestream:v_4`.
+
 ### Exact TMDB Matching
 If the scanner guesses a movie incorrectly, you can force an exact match by including the TMDB ID anywhere in the file or folder name:
 ```
