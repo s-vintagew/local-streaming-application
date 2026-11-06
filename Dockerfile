@@ -8,7 +8,7 @@ RUN npm run build
 
 # Stage 2: Setup the Node.js backend
 FROM node:18-alpine
-LABEL version="v_5"
+LABEL version="v3"
 WORKDIR /app
 
 # Install FFmpeg for video transcoding
