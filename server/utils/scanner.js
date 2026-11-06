@@ -1,6 +1,13 @@
+import crypto from 'crypto';
 import fs from 'fs';
 import path from 'path';
 import { fetchMetadata } from './metadata.js';
+
+const stableId = (value) => crypto.createHash('sha1').update(String(value)).digest('hex').slice(0, 12);
+
+export const mediaIdForPath = (filePath) => stableId(path.resolve(filePath));
+
+export const mediaIdForShow = (title) => stableId(`show:${title}`);
 
 let mediaLibrary = {
   movies: [],
@@ -30,7 +37,7 @@ export const scanMedia = async () => {
       if (file.type === 'tv') {
         if (!showsMap[file.title]) {
           showsMap[file.title] = {
-            id: file.id,
+            id: mediaIdForShow(file.title),
             title: file.title,
             type: 'tv',
             posterPath: file.posterPath,
@@ -229,7 +236,7 @@ const scanDirectory = async (dir) => {
           }
         }
         
-        const id = Math.random().toString(36).substring(2, 9);
+        const id = mediaIdForPath(fullPath);
         items.push({
           id,
           tmdbId: metadata.tmdb_id,

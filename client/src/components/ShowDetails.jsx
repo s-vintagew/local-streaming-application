@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import axios from 'axios';
 import { Play, ArrowLeft, Download } from 'lucide-react';
+import ExternalPlayerButton from './ExternalPlayerButton';
 
 const API_BASE = import.meta.env.VITE_API_BASE || '/api';
 const STREAM_BASE = import.meta.env.VITE_STREAM_BASE || '/stream';
@@ -101,6 +102,7 @@ export default function ShowDetails() {
                 <span>Play Now</span>
               </button>
               
+              <ExternalPlayerButton mediaId={media.id} />
               <a 
                 href={`${STREAM_BASE}?id=${media.id}&quality=original&download=true`}
                 download
@@ -138,6 +140,7 @@ export default function ShowDetails() {
                     </div>
                     
                     <div className="absolute right-4 flex space-x-2 z-20">
+                      <ExternalPlayerButton mediaId={ep.id} variant="icon" />
                       <a 
                         href={`${STREAM_BASE}?id=${ep.id}&quality=original&download=true`}
                         download

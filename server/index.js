@@ -36,8 +36,8 @@ app.get('*', (req, res) => {
 });
 
 // Start server immediately
-app.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
+app.listen(PORT, '0.0.0.0', () => {
+  console.log(`Server running on 0.0.0.0:${PORT}`);
   
   // Run initial scan in the background
   scanMedia().then(() => {
