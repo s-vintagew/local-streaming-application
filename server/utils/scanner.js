@@ -251,3 +251,14 @@ const scanDirectory = async (dir) => {
 };
 
 export const getLibrary = () => mediaLibrary;
+
+export const findMediaById = (id) => {
+  if (!id) return null;
+  const movie = mediaLibrary.movies.find(m => m.id === id);
+  if (movie) return movie;
+  for (const show of mediaLibrary.shows) {
+    const ep = show.episodes.find(e => e.id === id);
+    if (ep) return ep;
+  }
+  return null;
+};

@@ -1,9 +1,70 @@
 import { useState, useRef, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
+import Hls from 'hls.js';
 import { Play, Pause, SkipBack, SkipForward, ArrowLeft, Settings, Volume2, VolumeX, Maximize, Minimize, MessageSquare } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 
 const STREAM_BASE = import.meta.env.VITE_STREAM_BASE || '/stream';
+
+const sessionKey = (mediaId, resolution) => {
+  const safeId = String(mediaId).replace(/[^a-zA-Z0-9_-]/g, '');
+  const safeRes = String(resolution || '720').replace(/[^a-zA-Z0-9]/g, '');
+  return `${safeId}_${safeRes}`;
+};
+
+const qualityLabel = (q) => {
+  if (q === 'original') return 'Original';
+  if (q === 'transmux') return 'Remux';
+  return `${q}p`;
+};
+
+const LANG_NAMES = {
+  eng: 'English', en: 'English', hin: 'Hindi', spa: 'Spanish', fre: 'French', fra: 'French',
+  ger: 'German', deu: 'German', ita: 'Italian', jpn: 'Japanese', kor: 'Korean',
+  chi: 'Chinese', zho: 'Chinese', rus: 'Russian', por: 'Portuguese', pol: 'Polish',
+  ara: 'Arabic', und: 'Unknown'
+};
+
+const parseVttTime = (value) => {
+  const parts = value.trim().split(':');
+  if (parts.length === 3) return Number(parts[0]) * 3600 + Number(parts[1]) * 60 + parseFloat(parts[2]);
+  if (parts.length === 2) return Number(parts[0]) * 60 + parseFloat(parts[1]);
+  return parseFloat(value);
+};
+
+const parseVtt = (raw) => {
+  const cues = [];
+  const blocks = String(raw).replace(/\r/g, '').split(/\n\n+/);
+  for (const block of blocks) {
+    const lines = block.split('\n').filter((line) => line.trim() !== '');
+    const timeLine = lines.find((line) => line.includes('-->'));
+    if (!timeLine) continue;
+    const match = timeLine.match(/([\d:.]+)\s*-->\s*([\d:.]+)/);
+    if (!match) continue;
+    const idx = lines.indexOf(timeLine);
+    const text = lines.slice(idx + 1).join('\n').replace(/<[^>]+>/g, '').trim();
+    if (!text) continue;
+    cues.push({ start: parseVttTime(match[1]), end: parseVttTime(match[2]), text });
+  }
+  return cues;
+};
+
+const subtitleLabel = (sub) => {
+  const lang = LANG_NAMES[sub.language] || sub.language || 'Unknown';
+  let extra = sub.title || '';
+  if (extra.length > 36 || /1080p|WEBRip|GalaxyRG|x264|x265/i.test(extra)) extra = '';
+  if (/^sdh$/i.test(sub.title || '')) extra = 'SDH';
+  const base = extra ? `${lang} (${extra})` : lang;
+  if (!sub.supported) return `${base} (image — not supported)`;
+  return base;
+};
+
+const cueAt = (cues, time) => {
+  for (let i = 0; i < cues.length; i += 1) {
+    if (time >= cues[i].start && time < cues[i].end) return cues[i].text;
+  }
+  return '';
+};
 
 const formatTime = (timeInSeconds) => {
   if (isNaN(timeInSeconds) || timeInSeconds === Infinity) return '00:00';
@@ -22,11 +83,22 @@ export default function Player() {
   const videoRef = useRef(null);
   const containerRef = useRef(null);
   const lastTapRef = useRef({ time: 0, zone: '' });
+  const hlsRef = useRef(null);
+  const pendingSeekRef = useRef(null);
+  const offsetTimeRef = useRef(0);
+  const qualityRef = useRef('');
+  const hlsRestartTimer = useRef(null);
+  const hlsGenRef = useRef(0);
+  const hlsFatalRetries = useRef(0);
   const [isFullscreen, setIsFullscreen] = useState(false);
 
-  // Force kill the video stream connection when navigating away to prevent HTTP socket exhaustion
   useEffect(() => {
     return () => {
+      if (hlsRestartTimer.current) clearTimeout(hlsRestartTimer.current);
+      if (hlsRef.current) {
+        hlsRef.current.destroy();
+        hlsRef.current = null;
+      }
       if (videoRef.current) {
         videoRef.current.removeAttribute('src');
         videoRef.current.load();
@@ -36,14 +108,14 @@ export default function Player() {
   
   const [isPlaying, setIsPlaying] = useState(false);
   const [showControls, setShowControls] = useState(true);
-  const [quality, setQuality] = useState(''); // Empty until metadata loaded
+  const [quality, setQuality] = useState('');
+  const [playMode, setPlayMode] = useState('');
   const [showQualityMenu, setShowQualityMenu] = useState(false);
-  const [isBuffering, setIsBuffering] = useState(true); // Default to true while loading
+  const [isBuffering, setIsBuffering] = useState(true);
   
-  // Time and duration tracking
-  const [currentTime, setCurrentTime] = useState(0); // Display time
-  const [duration, setDuration] = useState(0); // Total video duration
-  const [offsetTime, setOffsetTime] = useState(0); // Offset when transcoding
+  const [currentTime, setCurrentTime] = useState(0);
+  const [duration, setDuration] = useState(0);
+  const [offsetTime, setOffsetTime] = useState(0);
   const [isSeeking, setIsSeeking] = useState(false);
 
   // Volume
@@ -53,12 +125,79 @@ export default function Player() {
   const [subtitles, setSubtitles] = useState([]);
   const [activeSubtitle, setActiveSubtitle] = useState(null);
   const [showSubtitleMenu, setShowSubtitleMenu] = useState(false);
+  const [subtitleCues, setSubtitleCues] = useState([]);
 
   const controlsTimeout = useRef(null);
 
-  // Initialize video source
-  const getVideoSrc = (qual, time) => {
-    return `${STREAM_BASE}?id=${id}&resolution=${qual}&time=${Math.floor(time)}`;
+  const HLS_SEEK_SLACK = 10;
+
+  const applyOffset = (seconds) => {
+    const t = Math.max(0, seconds || 0);
+    offsetTimeRef.current = t;
+    setOffsetTime(t);
+  };
+
+  const absTime = () => offsetTimeRef.current + (videoRef.current?.currentTime || 0);
+
+  const bufferedAbsEnd = () => {
+    const video = videoRef.current;
+    if (!video?.buffered?.length) return offsetTimeRef.current;
+    return offsetTimeRef.current + video.buffered.end(video.buffered.length - 1);
+  };
+
+  const getVideoSrc = (qual, start = 0) => {
+    if (qual === 'original') {
+      return `${STREAM_BASE}?id=${id}&resolution=original`;
+    }
+    const key = sessionKey(id, qual);
+    const startSec = Math.floor(Math.max(0, start || 0));
+    return `${STREAM_BASE}/hls/${key}/index.m3u8?id=${encodeURIComponent(id)}&resolution=${encodeURIComponent(qual)}&start=${startSec}&n=${Date.now()}`;
+  };
+
+  const flushHlsRestart = (qual, start) => {
+    const startSec = Math.floor(Math.max(0, start || 0));
+    applyOffset(startSec);
+    pendingSeekRef.current = 0;
+    setIsBuffering(true);
+    setVideoUrl(getVideoSrc(qual, startSec));
+  };
+
+  const scheduleHlsRestart = (qual, start, immediate = false) => {
+    const startSec = Math.floor(Math.max(0, start || 0));
+    applyOffset(startSec);
+    pendingSeekRef.current = 0;
+    setIsBuffering(true);
+    if (hlsRestartTimer.current) clearTimeout(hlsRestartTimer.current);
+    if (immediate) {
+      flushHlsRestart(qual, startSec);
+      return;
+    }
+    hlsRestartTimer.current = setTimeout(() => {
+      flushHlsRestart(qual, startSec);
+    }, 400);
+  };
+
+  const seekTo = (nextAbs) => {
+    const target = Math.max(0, Math.min(nextAbs, duration || nextAbs));
+    setCurrentTime(target);
+    if (!videoRef.current) return;
+    const qual = qualityRef.current || quality;
+
+    if (qual === 'original') {
+      if (hlsRestartTimer.current) clearTimeout(hlsRestartTimer.current);
+      videoRef.current.currentTime = target;
+      return;
+    }
+
+    const windowStart = offsetTimeRef.current;
+    const windowEnd = bufferedAbsEnd();
+    if (target >= windowStart - 1 && target <= windowEnd + HLS_SEEK_SLACK) {
+      if (hlsRestartTimer.current) clearTimeout(hlsRestartTimer.current);
+      videoRef.current.currentTime = Math.max(0, target - windowStart);
+      return;
+    }
+
+    scheduleHlsRestart(qual, target);
   };
 
   useEffect(() => {
@@ -72,22 +211,87 @@ export default function Player() {
         if (data.subtitles) {
           setSubtitles(data.subtitles);
         }
-        // If not natively streamable (e.g., mkv, avi), force transcode mode
-        const isNative = data.extension === '.mp4' || data.extension === '.webm';
-        if (!quality) {
-           const initQ = isNative ? 'original' : '1080';
-           setQuality(initQ);
-           setVideoUrl(getVideoSrc(initQ, 0));
-        } else if (!isNative && quality === 'original') {
-           setQuality('1080'); 
-           setVideoUrl(getVideoSrc('1080', 0));
-        }
+        setActiveSubtitle(null);
+        setSubtitleCues([]);
+        setPlayMode(data.playMode || '');
+        let initQ = data.recommendedQuality || '720';
+        if (initQ === '1080') initQ = '720';
+        qualityRef.current = initQ;
+        setQuality(initQ);
+        setVideoUrl(getVideoSrc(initQ));
       } catch (err) {
         console.error('Failed to fetch metadata', err);
       }
     };
     fetchMetadata();
-  }, [id, quality]);
+  }, [id]);
+
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video || !videoUrl) return undefined;
+
+    const playFromPending = () => {
+      if (pendingSeekRef.current != null && Number.isFinite(pendingSeekRef.current)) {
+        video.currentTime = pendingSeekRef.current;
+        pendingSeekRef.current = null;
+      }
+      video.play().catch(() => {});
+    };
+
+    if (quality === 'original') {
+      if (hlsRef.current) {
+        hlsRef.current.destroy();
+        hlsRef.current = null;
+      }
+      video.src = videoUrl;
+      playFromPending();
+      return undefined;
+    }
+
+    if (Hls.isSupported()) {
+      const gen = ++hlsGenRef.current;
+      const hls = new Hls({
+        enableWorker: true,
+        maxBufferLength: 60,
+        backBufferLength: 30,
+        startPosition: 0
+      });
+      hlsRef.current = hls;
+      hls.loadSource(videoUrl);
+      hls.attachMedia(video);
+      hls.on(Hls.Events.MANIFEST_PARSED, () => {
+        if (gen !== hlsGenRef.current) return;
+        hlsFatalRetries.current = 0;
+        playFromPending();
+      });
+      hls.on(Hls.Events.ERROR, (_evt, data) => {
+        if (gen !== hlsGenRef.current || !data?.fatal) return;
+        console.error('HLS error', data.type, data.details);
+        if (data.type === Hls.ErrorTypes.NETWORK_ERROR) {
+          hls.startLoad();
+          return;
+        }
+        if (data.type === Hls.ErrorTypes.MEDIA_ERROR) {
+          hls.recoverMediaError();
+          return;
+        }
+        const qual = qualityRef.current;
+        if (qual && qual !== 'original' && hlsFatalRetries.current < 2) {
+          hlsFatalRetries.current += 1;
+          scheduleHlsRestart(qual, offsetTimeRef.current, true);
+        }
+      });
+      return () => {
+        hlsGenRef.current += 1;
+        hls.destroy();
+        if (hlsRef.current === hls) hlsRef.current = null;
+      };
+    }
+
+    video.src = videoUrl;
+    playFromPending();
+    return undefined;
+  }, [videoUrl, quality]);
 
   useEffect(() => {
     const handleMouseMove = () => {
@@ -150,7 +354,7 @@ export default function Player() {
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [isPlaying, currentTime, duration, quality, offsetTime]); // Include dependencies so skip() has fresh state
+  }, [isPlaying, currentTime, duration, quality]);
 
 
   const handleDesktopClick = (e) => {
@@ -184,19 +388,32 @@ export default function Player() {
 
 
   useEffect(() => {
-    if (videoRef.current) {
-      const tracks = videoRef.current.textTracks;
-      for (let i = 0; i < tracks.length; i++) {
-        // We match by checking if this track corresponds to the activeSubtitle
-        // React renders tracks in order of subtitles array
-        if (activeSubtitle !== null && i === subtitles.findIndex(s => s.index === activeSubtitle)) {
-          tracks[i].mode = 'showing';
-        } else {
-          tracks[i].mode = 'hidden';
-        }
-      }
+    if (activeSubtitle === null) {
+      setSubtitleCues([]);
+      return undefined;
     }
-  }, [activeSubtitle, subtitles, videoUrl]);
+    const selected = subtitles.find((s) => s.index === activeSubtitle);
+    if (!selected?.supported) {
+      setSubtitleCues([]);
+      return undefined;
+    }
+    let cancelled = false;
+    fetch(`/api/subtitle?id=${encodeURIComponent(id)}&index=${activeSubtitle}`)
+      .then((res) => {
+        if (!res.ok) throw new Error('subtitle fetch failed');
+        return res.text();
+      })
+      .then((text) => {
+        if (!cancelled) setSubtitleCues(parseVtt(text));
+      })
+      .catch((err) => {
+        console.error(err);
+        if (!cancelled) setSubtitleCues([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [id, activeSubtitle, subtitles]);
 
   const togglePlay = () => {
     if (videoRef.current.paused) {
@@ -208,16 +425,14 @@ export default function Player() {
 
   const handleTimeUpdate = () => {
     if (!isSeeking && videoRef.current) {
-      setCurrentTime(offsetTime + videoRef.current.currentTime);
+      setCurrentTime(offsetTimeRef.current + videoRef.current.currentTime);
     }
   };
 
   const handleLoadedMetadata = () => {
-    // Native HTML5 gives us duration if it's original (Range request)
     if (quality === 'original' && videoRef.current.duration && videoRef.current.duration !== Infinity) {
       setDuration(videoRef.current.duration);
     }
-    // Restore volume
     videoRef.current.volume = volume;
     videoRef.current.muted = isMuted;
   };
@@ -230,53 +445,28 @@ export default function Player() {
 
   const handleSeekMouseUp = (e) => {
     setIsSeeking(false);
-    const newTime = parseFloat(e.target.value);
-    
-    if (quality === 'original') {
-      // Native seek
-      videoRef.current.currentTime = newTime;
-      setOffsetTime(0);
-    } else {
-      // Transcoded seek requires re-fetching from backend
-      setIsBuffering(true);
-      setOffsetTime(newTime);
-      setVideoUrl(getVideoSrc(quality, newTime));
-      videoRef.current.play();
-    }
+    seekTo(parseFloat(e.target.value));
   };
 
   const changeQuality = (newQuality) => {
     if (newQuality === quality) return;
-    
-    setIsBuffering(true);
-    // Remember absolute time before changing
-    const absTime = offsetTime + videoRef.current.currentTime;
+    const at = absTime();
+    qualityRef.current = newQuality;
     setQuality(newQuality);
     setShowQualityMenu(false);
-    
+    if (hlsRestartTimer.current) clearTimeout(hlsRestartTimer.current);
     if (newQuality === 'original') {
-      // Revert to native streaming
-      setOffsetTime(0);
-      setVideoUrl(getVideoSrc(newQuality, 0));
-      videoRef.current.currentTime = absTime; // Browser will handle the range request
-    } else {
-      // Switch to FFmpeg transcoding
-      setOffsetTime(absTime);
-      setVideoUrl(getVideoSrc(newQuality, absTime));
+      applyOffset(0);
+      pendingSeekRef.current = at;
+      setIsBuffering(true);
+      setVideoUrl(getVideoSrc(newQuality));
+      return;
     }
-    videoRef.current.play();
+    scheduleHlsRestart(newQuality, at, true);
   };
 
   const skip = (amount) => {
-    const target = Math.max(0, Math.min(currentTime + amount, duration || Infinity));
-    if (quality === 'original') {
-      videoRef.current.currentTime += amount;
-    } else {
-      setIsBuffering(true);
-      setOffsetTime(target);
-      setVideoUrl(getVideoSrc(quality, target));
-      videoRef.current.play();
-    }
+    seekTo(absTime() + amount);
   };
 
   const handleVolumeChange = (e) => {
@@ -299,7 +489,6 @@ export default function Player() {
     <div ref={containerRef} className="relative w-screen h-screen bg-black overflow-hidden group">
       <video
         ref={videoRef}
-        src={videoUrl}
         className="w-full h-full"
         onPlay={() => setIsPlaying(true)}
         onPause={() => setIsPlaying(false)}
@@ -309,31 +498,18 @@ export default function Player() {
         onPlaying={() => setIsBuffering(false)}
         onCanPlay={() => {
           setIsBuffering(false);
-          // Force tracks update when video can play
-          if (videoRef.current) {
-            const tracks = videoRef.current.textTracks;
-            for (let i = 0; i < tracks.length; i++) {
-              if (activeSubtitle !== null && i === subtitles.findIndex(s => s.index === activeSubtitle)) {
-                tracks[i].mode = 'showing';
-              } else {
-                tracks[i].mode = 'hidden';
-              }
-            }
-          }
         }}
         autoPlay
-      >
-        {subtitles.map(sub => (
-          <track
-            key={sub.index}
-            kind="subtitles"
-            src={`/api/subtitle?id=${id}&index=${sub.index}`}
-            srcLang={sub.language}
-            label={sub.title || sub.language}
-            default={activeSubtitle === sub.index}
-          />
-        ))}
-      </video>
+      />
+      {!!cueAt(subtitleCues, currentTime) && (
+        <div
+          className={`absolute left-0 right-0 z-[15] pointer-events-none flex justify-center px-6 md:px-16 ${showControls ? 'bottom-28' : 'bottom-12'}`}
+        >
+          <p className="player-cue text-center text-lg md:text-2xl font-semibold text-white max-w-4xl whitespace-pre-line leading-snug">
+            {cueAt(subtitleCues, currentTime)}
+          </p>
+        </div>
+      )}
 
       {/* Touch / Click Zones */}
       <div 
@@ -374,14 +550,17 @@ export default function Player() {
                 {subtitles.length > 0 && (
                   <div className="relative">
                     <button 
-                      onClick={() => setShowSubtitleMenu(!showSubtitleMenu)}
+                      onClick={() => {
+                        setShowSubtitleMenu(!showSubtitleMenu);
+                        setShowQualityMenu(false);
+                      }}
                       className={`text-white hover:text-brand-red flex items-center space-x-2 transition ${activeSubtitle !== null ? 'text-brand-red' : ''}`}
                     >
                       <MessageSquare size={24} />
                     </button>
                     
                     {showSubtitleMenu && (
-                      <div className="absolute top-full right-0 mt-4 bg-gray-900 rounded-lg py-2 min-w-[150px] shadow-2xl border border-gray-800">
+                      <div className="absolute top-full right-0 mt-4 bg-gray-900 rounded-lg py-2 min-w-[220px] max-h-[60vh] overflow-y-auto shadow-2xl border border-gray-800">
                         <button
                           onClick={() => { setActiveSubtitle(null); setShowSubtitleMenu(false); }}
                           className={`block w-full text-left px-4 py-2 hover:bg-gray-800 transition ${activeSubtitle === null ? 'text-brand-red font-bold' : 'text-gray-200'}`}
@@ -391,10 +570,15 @@ export default function Player() {
                         {subtitles.map(sub => (
                           <button
                             key={sub.index}
-                            onClick={() => { setActiveSubtitle(sub.index); setShowSubtitleMenu(false); }}
-                            className={`block w-full text-left px-4 py-2 hover:bg-gray-800 transition ${activeSubtitle === sub.index ? 'text-brand-red font-bold' : 'text-gray-200'}`}
+                            disabled={!sub.supported}
+                            onClick={() => {
+                              if (!sub.supported) return;
+                              setActiveSubtitle(sub.index);
+                              setShowSubtitleMenu(false);
+                            }}
+                            className={`block w-full text-left px-4 py-2 transition ${!sub.supported ? 'text-gray-500 cursor-not-allowed' : 'hover:bg-gray-800'} ${activeSubtitle === sub.index ? 'text-brand-red font-bold' : 'text-gray-200'}`}
                           >
-                            {sub.title || sub.language || `Track ${sub.index}`}
+                            {subtitleLabel(sub)}
                           </button>
                         ))}
                       </div>
@@ -404,22 +588,25 @@ export default function Player() {
 
                 <div className="relative">
                   <button 
-                    onClick={() => setShowQualityMenu(!showQualityMenu)}
+                    onClick={() => {
+                      setShowQualityMenu(!showQualityMenu);
+                      setShowSubtitleMenu(false);
+                    }}
                     className="text-white hover:text-gray-300 flex items-center space-x-2 transition"
                   >
                     <Settings size={24} />
-                    <span className="uppercase text-sm font-semibold hidden sm:inline">{quality === 'original' ? 'Auto' : `${quality}p`}</span>
+                    <span className="uppercase text-sm font-semibold hidden sm:inline">{qualityLabel(quality)}</span>
                   </button>
                   
                   {showQualityMenu && (
                     <div className="absolute top-full right-0 mt-4 bg-gray-900 rounded-lg py-2 min-w-[120px] shadow-2xl border border-gray-800">
-                      {['original', 'transmux', '1080', '720', '480'].map(q => (
+                      {(playMode === 'original' ? ['original', 'transmux', '720', '480'] : playMode === 'transmux' ? ['transmux', '720', '480'] : ['720', '480']).map(q => (
                         <button
                           key={q}
                           onClick={() => changeQuality(q)}
                           className={`block w-full text-left px-4 py-2 hover:bg-gray-800 transition ${quality === q ? 'text-brand-red font-bold' : 'text-gray-200'}`}
                         >
-                          {q === 'original' ? 'Original' : q === 'transmux' ? 'Direct' : `${q}p`}
+                          {qualityLabel(q)}
                         </button>
                       ))}
                     </div>

@@ -1,133 +1,131 @@
 import express from 'express';
-import ffmpeg from 'fluent-ffmpeg';
 import fs from 'fs';
-import { getLibrary } from '../utils/scanner.js';
+import path from 'path';
+import { findMediaById } from '../utils/scanner.js';
+import { ensureHlsJob, resolveHlsFile, sessionKey, JobCancelled } from '../utils/hlsTranscoder.js';
 
 const router = express.Router();
 
-router.get('/', (req, res) => {
-  const { id, resolution, time, download } = req.query;
-  
-  if (!id) {
-    return res.status(400).send('Missing video id');
-  }
+const MIME = {
+  '.mp4': 'video/mp4',
+  '.m4v': 'video/mp4',
+  '.webm': 'video/webm'
+};
 
-  const library = getLibrary();
-  let media = library.movies.find(m => m.id === id);
-  if (!media) {
-    for (const show of library.shows) {
-      const ep = show.episodes.find(e => e.id === id);
-      if (ep) {
-        media = ep;
-        break;
-      }
-    }
-  }
-
-  if (!media) {
-    return res.status(404).send('Media not found');
-  }
-
+const rangeOriginal = (req, res, media) => {
   const videoPath = media.path;
   const fileName = media.originalTitle || 'video.mp4';
-  
   if (!fs.existsSync(videoPath)) {
     return res.status(404).send('File not found');
   }
 
-  // Handle original quality (Native HTTP Streaming with Range Support)
-  if (!resolution || resolution === 'original') {
-    const stat = fs.statSync(videoPath);
-    const fileSize = stat.size;
-    const range = req.headers.range;
-    
-    const disposition = download === 'true' 
-      ? `attachment; filename="${encodeURIComponent(fileName)}"` 
-      : 'inline';
-      
-    const contentType = download === 'true' ? 'application/octet-stream' : 'video/mp4';
+  const stat = fs.statSync(videoPath);
+  const fileSize = stat.size;
+  const range = req.headers.range;
+  const download = req.query.download === 'true';
+  const ext = path.extname(videoPath).toLowerCase();
+  const disposition = download
+    ? `attachment; filename="${encodeURIComponent(fileName)}"`
+    : 'inline';
+  const contentType = download ? 'application/octet-stream' : (MIME[ext] || 'video/mp4');
 
-    // If forcing a download, ignore the Range header to prevent browsers from downloading a 2-byte probe chunk
-    if (range && download !== 'true') {
-      const parts = range.replace(/bytes=/, "").split("-");
-      const start = parseInt(parts[0], 10);
-      const end = parts[1] ? parseInt(parts[1], 10) : fileSize - 1;
-      const chunksize = (end - start) + 1;
-      const file = fs.createReadStream(videoPath, { start, end });
-      const head = {
-        'Content-Range': `bytes ${start}-${end}/${fileSize}`,
-        'Accept-Ranges': 'bytes',
-        'Content-Length': chunksize,
-        'Content-Type': contentType,
-        'Content-Disposition': disposition
-      };
-      res.writeHead(206, head);
-      file.pipe(res);
-    } else {
-      const head = {
-        'Content-Length': fileSize,
-        'Content-Type': contentType,
-        'Content-Disposition': disposition
-      };
-      res.writeHead(200, head);
-      fs.createReadStream(videoPath).pipe(res);
+  if (range && !download) {
+    const parts = range.replace(/bytes=/, '').split('-');
+    const start = parseInt(parts[0], 10);
+    const end = parts[1] ? parseInt(parts[1], 10) : fileSize - 1;
+    if (Number.isNaN(start) || start >= fileSize || end >= fileSize || start > end) {
+      res.writeHead(416, { 'Content-Range': `bytes */${fileSize}` });
+      return res.end();
     }
+    const chunksize = (end - start) + 1;
+    const file = fs.createReadStream(videoPath, { start, end });
+    res.writeHead(206, {
+      'Content-Range': `bytes ${start}-${end}/${fileSize}`,
+      'Accept-Ranges': 'bytes',
+      'Content-Length': chunksize,
+      'Content-Type': contentType,
+      'Content-Disposition': disposition
+    });
+    file.pipe(res);
     return;
   }
 
-  // Handle Transcoded Quality (via FFmpeg)
-  const startTime = time ? parseInt(time) : 0;
-  console.log(`Streaming requested: resolution=${resolution}, time=${time}, startTime=${startTime}`);
-
-  
   res.writeHead(200, {
-    'Content-Type': 'video/mp4',
-    'Transfer-Encoding': 'chunked',
-    'Access-Control-Allow-Origin': '*'
+    'Content-Length': fileSize,
+    'Accept-Ranges': 'bytes',
+    'Content-Type': contentType,
+    'Content-Disposition': disposition
   });
+  fs.createReadStream(videoPath).pipe(res);
+};
 
-  const command = ffmpeg(videoPath)
-    .seekInput(startTime)
-    .format('mp4')
-    .outputOptions([
-      '-movflags frag_keyframe+empty_moov+default_base_moof+omit_tfhd_offset',
-      '-avoid_negative_ts make_zero'
-    ]);
+router.get('/hls/:session/:file', async (req, res) => {
+  const { session, file } = req.params;
+  const { id, resolution, start } = req.query;
 
-  if (resolution === 'transmux') {
-    // Zero-CPU video copy, only re-encode audio to AAC for browser compatibility
-    command.videoCodec('copy').audioCodec('aac').audioChannels(2).audioFrequency(44100).audioBitrate('128k');
-  } else {
-    // Full transcode with scaling
-    const resValue = parseInt(resolution);
-    command.outputOptions([
-             '-preset veryfast', 
-             '-crf 23', 
-             '-maxrate 5M', 
-             '-bufsize 10M', 
-             '-g 48', 
-             '-pix_fmt yuv420p',
-             '-threads 0'
-           ])
-           .videoFilter(`scale=-2:${resValue}`)
-           .videoCodec('libx264')
-           .audioCodec('aac')
-           .audioChannels(2)
-           .audioFrequency(44100)
-           .audioBitrate('128k');
+  if (file === 'index.m3u8' && id && resolution) {
+    if (sessionKey(id, resolution) !== session) {
+      return res.status(400).send('Session mismatch');
+    }
+    const media = findMediaById(id);
+    if (!media) return res.status(404).send('Media not found');
+    try {
+      await ensureHlsJob({
+        id,
+        resolution,
+        mediaPath: media.path,
+        startTime: Number(start) || 0,
+        isAborted: () => req.destroyed || req.aborted
+      });
+    } catch (err) {
+      if (req.destroyed || req.aborted) return;
+      if (err instanceof JobCancelled) {
+        const ready = resolveHlsFile(session, file);
+        if (ready && fs.existsSync(ready)) {
+          // Latest job already produced this playlist.
+        } else {
+          return res.status(409).send('superseded');
+        }
+      } else {
+        console.error('HLS start failed:', err.message);
+        return res.status(503).send('Transcoder failed to start');
+      }
+    }
   }
 
-  command.on('error', (err) => {
-    if (err.message !== 'Output stream closed' && err.message !== 'ffmpeg was killed with signal SIGKILL') {
-      console.error('FFmpeg Error:', err.message);
-    }
-  });
+  const full = resolveHlsFile(session, file);
+  if (!full || !fs.existsSync(full)) {
+    return res.status(404).send('Segment not ready');
+  }
 
-  command.pipe(res, { end: true });
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  if (full.endsWith('.m3u8')) {
+    res.setHeader('Content-Type', 'application/vnd.apple.mpegurl');
+  } else {
+    res.setHeader('Content-Type', 'video/MP2T');
+  }
+  fs.createReadStream(full).pipe(res);
+});
 
-  req.on('close', () => {
-    command.kill('SIGKILL');
-  });
+router.get('/', (req, res) => {
+  const { id, resolution, download } = req.query;
+  if (!id) {
+    return res.status(400).send('Missing video id');
+  }
+
+  const media = findMediaById(id);
+  if (!media) {
+    return res.status(404).send('Media not found');
+  }
+
+  if (download === 'true' || !resolution || resolution === 'original') {
+    return rangeOriginal(req, res, media);
+  }
+
+  const key = sessionKey(id, resolution);
+  const start = Number(req.query.time || req.query.start || 0) || 0;
+  return res.redirect(`/stream/hls/${key}/index.m3u8?id=${encodeURIComponent(id)}&resolution=${encodeURIComponent(resolution)}&start=${Math.floor(start)}`);
 });
 
 export default router;

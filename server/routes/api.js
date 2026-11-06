@@ -3,7 +3,9 @@ import fs from 'fs';
 import path from 'path';
 import ffmpeg from 'fluent-ffmpeg';
 import { fileURLToPath } from 'url';
-import { getLibrary, scanMedia } from '../utils/scanner.js';
+import { getLibrary, scanMedia, findMediaById } from '../utils/scanner.js';
+import { analyzeProbe } from '../utils/playability.js';
+import { describeSubtitle, getSubtitleVtt } from '../utils/subtitles.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -76,18 +78,7 @@ router.get('/metadata', (req, res) => {
   const { id } = req.query;
   if (!id) return res.status(400).send('Missing id');
 
-  const library = getLibrary();
-  let media = library.movies.find(m => m.id === id);
-  if (!media) {
-    for (const show of library.shows) {
-      const ep = show.episodes.find(e => e.id === id);
-      if (ep) {
-        media = ep;
-        break;
-      }
-    }
-  }
-
+  const media = findMediaById(id);
   if (!media) return res.status(404).send('Media not found');
 
   ffmpeg.ffprobe(media.path, (err, metadata) => {
@@ -95,62 +86,34 @@ router.get('/metadata', (req, res) => {
       console.error('ffprobe error:', err.message);
       return res.status(500).json({ error: 'Failed to probe media' });
     }
+    const play = analyzeProbe(metadata, path.extname(media.path).toLowerCase());
     res.json({
-      duration: metadata.format.duration, // Precise duration in seconds
-      format: metadata.format.format_name,
-      extension: path.extname(media.path).toLowerCase(),
-      width: metadata.streams.find(s => s.codec_type === 'video')?.width,
-      height: metadata.streams.find(s => s.codec_type === 'video')?.height,
+      ...play,
       subtitles: metadata.streams
         .filter(s => s.codec_type === 'subtitle')
-        .map(s => ({
-          index: s.index,
-          language: (s.tags && s.tags.language) ? s.tags.language : 'und',
-          title: (s.tags && s.tags.title) ? s.tags.title : `Track ${s.index}`
-        }))
+        .map(describeSubtitle)
     });
   });
 });
 
 
 
-router.get('/subtitle', (req, res) => {
+router.get('/subtitle', async (req, res) => {
   const { id, index } = req.query;
   if (!id || index === undefined) return res.status(400).send('Missing id or index');
 
-  const library = getLibrary();
-  let media = library.movies.find(m => m.id === id);
-  if (!media) {
-    for (const show of library.shows) {
-      const ep = show.episodes.find(e => e.id === id);
-      if (ep) {
-        media = ep;
-        break;
-      }
-    }
-  }
-
+  const media = findMediaById(id);
   if (!media) return res.status(404).send('Media not found');
 
-  res.setHeader('Content-Type', 'text/vtt');
-  res.setHeader('Access-Control-Allow-Origin', '*');
-
-  const command = ffmpeg(media.path)
-    .outputOptions([
-      `-map 0:${index}`,
-      '-f webvtt'
-    ])
-    .on('error', (err) => {
-      if (err.message !== 'Output stream closed' && err.message !== 'ffmpeg was killed with signal SIGKILL') {
-        console.error('Subtitle FFmpeg Error:', err.message);
-      }
-    });
-
-  command.pipe(res, { end: true });
-
-  req.on('close', () => {
-    command.kill('SIGKILL');
-  });
+  try {
+    const vttPath = await getSubtitleVtt(id, index, media.path);
+    res.setHeader('Content-Type', 'text/vtt; charset=utf-8');
+    res.setHeader('Cache-Control', 'public, max-age=86400');
+    res.sendFile(path.resolve(vttPath));
+  } catch (err) {
+    console.error('Subtitle extract failed:', err.message);
+    res.status(415).send('Subtitle track cannot be converted to text');
+  }
 });
 
 export default router;

@@ -1,7 +1,7 @@
 services:
   vintagestream:
     build: .
-    image: vintagestream:v_3
+    image: vintagestream:v_4
     container_name: vintagestream
     restart: unless-stopped
     ports:

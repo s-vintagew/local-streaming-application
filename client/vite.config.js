@@ -7,14 +7,15 @@ export default defineConfig(({ mode }) => {
     envDir: '../',
     plugins: [react()],
     server: {
-      port: parseInt(env.FRONTEND_PORT || '5173'),
+      port: parseInt(process.env.FRONTEND_PORT || env.FRONTEND_PORT || '5173'),
+      strictPort: true,
       proxy: {
         '/api': {
-          target: `http://localhost:${env.PORT || '6000'}`,
+          target: `http://localhost:${process.env.PORT || env.PORT || '6000'}`,
           changeOrigin: true
         },
         '/stream': {
-          target: `http://localhost:${env.PORT || '6000'}`,
+          target: `http://localhost:${process.env.PORT || env.PORT || '6000'}`,
           changeOrigin: true
         }
       }

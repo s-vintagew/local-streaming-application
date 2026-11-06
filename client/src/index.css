@@ -29,3 +29,11 @@ body {
   background: #555; 
 }
 
+.player-cue {
+  text-shadow:
+    0 0 4px #000,
+    0 0 10px #000,
+    1px 1px 2px #000,
+    -1px -1px 2px #000;
+}
+
