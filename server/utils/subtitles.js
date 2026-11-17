@@ -322,6 +322,13 @@ export const toPublicSubtitle = (track) => {
   return pub;
 };
 
+const SUB_MIME = {
+  '.srt': 'application/x-subrip; charset=utf-8',
+  '.vtt': 'text/vtt; charset=utf-8',
+  '.ass': 'text/x-ssa; charset=utf-8',
+  '.ssa': 'text/x-ssa; charset=utf-8'
+};
+
 const assertNearVideo = (filePath, mediaPath) => {
   const realFile = fs.realpathSync(filePath);
   const videoDir = fs.realpathSync(path.dirname(mediaPath));
@@ -331,6 +338,36 @@ const assertNearVideo = (filePath, mediaPath) => {
     throw new Error('Subtitle file is outside the movie folder');
   }
   return realFile;
+};
+
+/**
+ * Resolve a sidecar subtitle for direct download (no FFmpeg / VTT conversion).
+ * Only external tracks (index starting with "f") are supported.
+ */
+export const resolveExternalSubtitleFile = (index, mediaPath) => {
+  if (!String(index).startsWith('f')) {
+    const error = new Error('Only external subtitle files can be served raw');
+    error.status = 400;
+    throw error;
+  }
+  const track = listExternalSubtitles(mediaPath).find((item) => item.index === String(index));
+  if (!track) {
+    const error = new Error('Subtitle file not found');
+    error.status = 404;
+    throw error;
+  }
+  const realFile = assertNearVideo(track.file, mediaPath);
+  if (!fs.existsSync(realFile)) {
+    const error = new Error('Subtitle file not found');
+    error.status = 404;
+    throw error;
+  }
+  const ext = path.extname(realFile).toLowerCase();
+  return {
+    path: realFile,
+    contentType: SUB_MIME[ext] || 'application/octet-stream',
+    fileName: path.basename(realFile)
+  };
 };
 
 export const srtToVtt = (raw) => {

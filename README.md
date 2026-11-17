@@ -84,11 +84,15 @@ To get the best matches from TMDB, standard naming conventions are recommended, 
 - **Movies:** \`Movie Title (Year).mkv\`
 - **TV Shows:** \`Show Title/Season 01/Show Title S01E01.mkv\`
 
-### Marvel shelf (v3.1)
+### Marvel shelf (v3.1+)
 
 This special edition adds a **Marvel** tab. Recognized MCU and Marvel releases are taken out of Movies and TV Shows and grouped in timeline order, through Avengers: Doomsday. Anything placed in a folder named `Marvel` or `MCU` is included as well.
 
-The image is published as `ghcr.io/s-vintagew/local-streaming-application:v3.1`. Tag `v3` remains the edition without this shelf.
+### Direct-play helpers (v3.2)
+
+Original streams advertise correct MIME types for MKV/AVI, and `GET /api/subtitle-file` serves sidecar subtitle files without FFmpeg conversion for external players.
+
+The image is published as `ghcr.io/s-vintagew/local-streaming-application:v3.2`. Tag `v3` remains the edition without the Marvel shelf.
 
 ### Exact TMDB Matching
 If the scanner guesses a movie incorrectly, you can force an exact match by including the TMDB ID anywhere in the file or folder name:

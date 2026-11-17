@@ -5,7 +5,7 @@ import ffmpeg from 'fluent-ffmpeg';
 import { fileURLToPath } from 'url';
 import { getLibrary, scanMedia, findMediaById } from '../utils/scanner.js';
 import { analyzeProbe } from '../utils/playability.js';
-import { describeSubtitle, getExternalSubtitleVtt, getSubtitleVtt, listExternalSubtitles, toPublicSubtitle } from '../utils/subtitles.js';
+import { describeSubtitle, getExternalSubtitleVtt, getSubtitleVtt, listExternalSubtitles, resolveExternalSubtitleFile, toPublicSubtitle } from '../utils/subtitles.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -126,6 +126,29 @@ router.get('/subtitle', async (req, res) => {
     console.error('Subtitle extract failed:', err.message);
     if (err.status === 404) return res.status(404).send('Subtitle file not found');
     res.status(415).send('Subtitle track cannot be converted to text');
+  }
+});
+
+// Raw sidecar file for direct-play clients (mpv/libmpv). No FFmpeg conversion.
+router.get('/subtitle-file', (req, res) => {
+  const { id, index } = req.query;
+  if (!id || index === undefined) return res.status(400).send('Missing id or index');
+
+  const media = findMediaById(id);
+  if (!media) return res.status(404).send('Media not found');
+
+  try {
+    const file = resolveExternalSubtitleFile(index, media.path);
+    res.setHeader('Content-Type', file.contentType);
+    res.setHeader('Content-Disposition', `inline; filename="${encodeURIComponent(file.fileName)}"`);
+    res.setHeader('Cache-Control', 'public, max-age=86400');
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    return res.sendFile(path.resolve(file.path));
+  } catch (err) {
+    console.error('Raw subtitle serve failed:', err.message);
+    if (err.status === 400) return res.status(400).send(err.message);
+    if (err.status === 404) return res.status(404).send('Subtitle file not found');
+    return res.status(500).send('Failed to serve subtitle file');
   }
 });
 
