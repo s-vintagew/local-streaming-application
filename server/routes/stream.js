@@ -9,7 +9,9 @@ const router = express.Router();
 const MIME = {
   '.mp4': 'video/mp4',
   '.m4v': 'video/mp4',
-  '.webm': 'video/webm'
+  '.webm': 'video/webm',
+  '.mkv': 'video/x-matroska',
+  '.avi': 'video/x-msvideo'
 };
 
 const rangeOriginal = (req, res, media) => {
