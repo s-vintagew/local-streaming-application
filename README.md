@@ -92,7 +92,11 @@ This special edition adds a **Marvel** tab. Recognized MCU and Marvel releases a
 
 Original streams advertise correct MIME types for MKV/AVI, and `GET /api/subtitle-file` serves sidecar subtitle files without FFmpeg conversion for external players.
 
-The image is published as `ghcr.io/s-vintagew/local-streaming-application:v3.2`. Tag `v3` remains the edition without the Marvel shelf.
+### Downloads (v3.3)
+
+The download button saves the original file and keeps its real extension (`.mp4`, `.mkv`, `.avi`, or `.webm`), so the file opens as video without renaming.
+
+The image is published as `ghcr.io/s-vintagew/local-streaming-application:v3.3`. Tag `v3` remains the edition without the Marvel shelf.
 
 ### Exact TMDB Matching
 If the scanner guesses a movie incorrectly, you can force an exact match by including the TMDB ID anywhere in the file or folder name:
