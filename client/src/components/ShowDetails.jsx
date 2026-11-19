@@ -7,6 +7,22 @@ import ExternalPlayerButton from './ExternalPlayerButton';
 const API_BASE = import.meta.env.VITE_API_BASE || '/api';
 const STREAM_BASE = import.meta.env.VITE_STREAM_BASE || '/stream';
 
+const downloadFileName = (item) => {
+  const diskName = String(item?.path || '').split(/[/\\]/).pop() || '';
+  const extMatch = diskName.match(/(\.[a-z0-9]{1,8})$/i);
+  const ext = extMatch ? extMatch[1].toLowerCase() : '.mp4';
+  let base = String(item?.originalTitle || item?.title || diskName.replace(/\.[^.]+$/, '') || 'video');
+  base = base.replace(/[\\/:*?"<>|]/g, ' ').replace(/\s+/g, ' ').trim() || 'video';
+  if (base.toLowerCase().endsWith(ext)) return base;
+  return `${base}${ext}`;
+};
+
+const downloadHref = (item) => {
+  const name = downloadFileName(item);
+  const root = STREAM_BASE.replace(/\/$/, '');
+  return `${root}/file/${encodeURIComponent(name)}?id=${encodeURIComponent(item.id)}&download=true`;
+};
+
 export default function ShowDetails() {
   const { id } = useParams();
   const navigate = useNavigate();
@@ -103,8 +119,8 @@ export default function ShowDetails() {
               
               <ExternalPlayerButton mediaId={media.id} />
               <a 
-                href={`${STREAM_BASE}?id=${media.id}&quality=original&download=true`}
-                download
+                href={downloadHref(media)}
+                download={downloadFileName(media)}
                 className="flex items-center space-x-2 bg-gray-800 text-white px-6 py-3 rounded-lg font-bold hover:bg-gray-700 transition-colors border border-gray-700"
               >
                 <Download size={20} />
@@ -141,8 +157,8 @@ export default function ShowDetails() {
                     <div className="absolute right-4 flex space-x-2 z-20">
                       <ExternalPlayerButton mediaId={ep.id} variant="icon" />
                       <a 
-                        href={`${STREAM_BASE}?id=${ep.id}&quality=original&download=true`}
-                        download
+                        href={downloadHref(ep)}
+                        download={downloadFileName(ep)}
                         onClick={(e) => e.stopPropagation()}
                         className="w-10 h-10 rounded-full bg-gray-800 text-gray-300 flex items-center justify-center hover:bg-brand-red hover:text-white transition-colors shadow-sm"
                         title="Download Episode"
